@@ -21,6 +21,9 @@
    Written and maintained by Michal Zalewski <lcamtuf@google.com>
 */
 
+/*
+   高级printf，输出信息
+ */
 #ifndef _HAVE_DEBUG_H
 #define _HAVE_DEBUG_H
 

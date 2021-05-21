@@ -56,27 +56,30 @@
 #include <sys/wait.h>
 #include <sys/time.h>
 
-static u8** as_params;          /* Parameters passed to the real 'as'   */
+static u8 **as_params;          /* Parameters passed to the real 'as' 交给汇编器的参数   */
 
-static u8*  input_file;         /* Originally specified input file      */
-static u8*  modified_file;      /* Instrumented file for the real 'as'  */
+static u8 *input_file;         /* Originally specified input file 最初指定的输入文件   */
+static u8 *modified_file;      /* Instrumented file for the real 'as' 交给汇编器的插桩后的文件  */
 
-static u8   be_quiet,           /* Quiet mode (no stderr output)        */
-            clang_mode,         /* Running in clang mode?               */
-            pass_thru,          /* Just pass data through?              */
-            just_version,       /* Just show version?                   */
-            sanitizer;          /* Using ASAN / MSAN                    */
+static u8 be_quiet,           /* Quiet mode (no stderr output)        */
+clang_mode,         /* Running in clang mode?               */
+pass_thru,          /* Just pass data through? 只是通过数据？             */
+just_version,       /* Just show version? 是否只是显示版本？                  */
+sanitizer;          /* Using ASAN / MSAN 是否使用ASAN或MSAN                  */
 
-static u32  inst_ratio = 100,   /* Instrumentation probability (%)      */
-            as_par_cnt = 1;     /* Number of params to 'as'             */
+static u32 inst_ratio = 100,   /* Instrumentation probability (%) 插桩概率     */
+as_par_cnt = 1;     /* Number of params to 'as' 交给汇编器的参数的个数            */
 
 /* If we don't find --32 or --64 in the command line, default to 
    instrumentation for whichever mode we were compiled with. This is not
-   perfect, but should do the trick for almost all use cases. */
+   perfect, but should do the trick for almost all use cases.
+
+   如果我们在命令行中找不到--32或--64，则无论使用哪种编译方式，都默认为检测。这不是完美的，
+   但是应该在几乎所有用例中都可以解决。*/
 
 #ifdef WORD_SIZE_64
 
-static u8   use_64bit = 1;
+static u8 use_64bit = 1;
 
 #else
 
@@ -91,9 +94,12 @@ static u8   use_64bit = 0;
 
 /* Examine and modify parameters to pass to 'as'. Note that the file name
    is always the last parameter passed by GCC, so we exploit this property
-   to keep the code simple. */
+   to keep the code simple.
 
-static void edit_params(int argc, char** argv) {
+   检查并修改参数以传递给“as”。请注意，文件名始终是GCC传递的最后一个参数，因此我们利用
+   此属性使代码保持简单。*/
+
+static void edit_params(int argc, char **argv) {
 
   u8 *tmp_dir = getenv("TMPDIR"), *afl_as = getenv("AFL_AS");
   u32 i;
@@ -134,14 +140,15 @@ static void edit_params(int argc, char** argv) {
   if (!tmp_dir) tmp_dir = getenv("TMP");
   if (!tmp_dir) tmp_dir = "/tmp";
 
-  as_params = ck_alloc((argc + 32) * sizeof(u8*));
+  as_params = ck_alloc((argc + 32) * sizeof(u8 *));
 
-  as_params[0] = afl_as ? afl_as : (u8*)"as";
+  as_params[0] = afl_as ? afl_as : (u8 *) "as";
 
   as_params[argc] = 0;
 
   for (i = 1; i < argc - 1; i++) {
 
+    // 寻找--64或--32选项
     if (!strcmp(argv[i], "--64")) use_64bit = 1;
     else if (!strcmp(argv[i], "--32")) use_64bit = 0;
 
@@ -165,6 +172,7 @@ static void edit_params(int argc, char** argv) {
 
 #endif /* __APPLE__ */
 
+    // 将选项赋值给as_params以传给汇编器
     as_params[as_par_cnt++] = argv[i];
 
   }
@@ -184,56 +192,66 @@ static void edit_params(int argc, char** argv) {
 
 #endif /* __APPLE__ */
 
+  // 输入的最后一个参数是要处理的文件，虽然可能不是
   input_file = argv[argc - 1];
 
+  // 最后一个参数以-开头
   if (input_file[0] == '-') {
 
+    // 若是显示版本信息，则不做任何修改，modified_file就是input_file
     if (!strcmp(input_file + 1, "-version")) {
       just_version = 1;
       modified_file = input_file;
       goto wrap_things_up;
     }
 
+    // 不是显示版本信息，但最后一个参数是以-开头
     if (input_file[1]) FATAL("Incorrect use (not called through afl-gcc?)");
-      else input_file = NULL;
+    else input_file = NULL;
 
   } else {
 
     /* Check if this looks like a standard invocation as a part of an attempt
        to compile a program, rather than using gcc on an ad-hoc .s file in
        a format we may not understand. This works around an issue compiling
-       NSS. */
+       NSS.
+       检查这是否看起来像是标准调用，作为尝试编译程序的一部分，而不是在我们可能无法理解的格式
+       的临时.s文件中使用gcc。这可以解决编译NSS的问题。*/
 
+    // 输入的最后一个参数不是以-开头，检查输入文件是否是仅需传给汇编器的文件
     if (strncmp(input_file, tmp_dir, strlen(tmp_dir)) &&
         strncmp(input_file, "/var/tmp/", 9) &&
-        strncmp(input_file, "/tmp/", 5)) pass_thru = 1;
+        strncmp(input_file, "/tmp/", 5))
+      pass_thru = 1;
 
   }
 
+  // modified_file是一个临时文件，只是为了传给汇编器
   modified_file = alloc_printf("%s/.afl-%u-%u.s", tmp_dir, getpid(),
-                               (u32)time(NULL));
+                               (u32) time(NULL));
 
-wrap_things_up:
+  wrap_things_up:
 
   as_params[as_par_cnt++] = modified_file;
-  as_params[as_par_cnt]   = NULL;
+  as_params[as_par_cnt] = NULL;
 
 }
 
 
 /* Process input file, generate modified_file. Insert instrumentation in all
-   the appropriate places. */
+   the appropriate places.
+   处理输入文件，生成modified_file。将指令插入所有适当的位置。*/
 
 static void add_instrumentation(void) {
 
-  static u8 line[MAX_LINE];
+  static u8 line[MAX_LINE]; // 每一行的文件内容
 
-  FILE* inf;
-  FILE* outf;
-  s32 outfd;
-  u32 ins_lines = 0;
+  FILE *inf;  // 输入文件，即input_file
+  FILE *outf; // 输出文件，即modified_file
+  s32 outfd;  // 打开modified_file时的文件描述符
+  u32 ins_lines = 0;  // 被插桩的行数
 
-  u8  instr_ok = 0, skip_csect = 0, skip_next_label = 0,
+  u8 instr_ok = 0, skip_csect = 0, skip_next_label = 0,
       skip_intel = 0, skip_app = 0, instrument_next = 0;
 
 #ifdef __APPLE__
@@ -249,24 +267,39 @@ static void add_instrumentation(void) {
 
   } else inf = stdin;
 
+  /*
+   打开和创建文件，成功则返回文件描述符，否则返回-1，O_WRONLY为只写模式，O_EXCL表示
+   要创建的文件已存在则返回-1并修改错误码，O_CREAT表示文件不存在则创建该文件，最后一个
+   参数表示文件访问权限的初始值，0600表示-rw-------。
+   */
   outfd = open(modified_file, O_WRONLY | O_EXCL | O_CREAT, 0600);
 
   if (outfd < 0) PFATAL("Unable to write to '%s'", modified_file);
 
+  // 用文件描述符打开文件
   outf = fdopen(outfd, "w");
 
-  if (!outf) PFATAL("fdopen() failed");  
+  if (!outf) PFATAL("fdopen() failed");
 
   while (fgets(line, MAX_LINE, inf)) {
 
     /* In some cases, we want to defer writing the instrumentation trampoline
        until after all the labels, macros, comments, etc. If we're in this
        mode, and if the line starts with a tab followed by a character, dump
-       the trampoline now. */
+       the trampoline now.
+       在某些情况下，我们希望将指令的编写推迟到所有标签，宏，注释等之后。如果处于这种模式
+       下，并且如果该行以制表符后跟一个字符开头，请立即转储蹦床。*/
 
+    // 仅仅插桩以制表符开头的行，格式化输出插入的汇编代码到文件中并且要满足instr_ok和instrument_next
     if (!pass_thru && !skip_intel && !skip_app && !skip_csect && instr_ok &&
         instrument_next && line[0] == '\t' && isalpha(line[1])) {
 
+      /*
+       R(MAP_SIZE)即为插桩指令将ecx（rcx）设置的值。根据定义，宏MAP_SIZE为64K；R(x)的
+       定义是(random() % (x))，所以R(MAP_SIZE)即为0到MAP_SIZE之间的一个随机数。因此，
+       在处理到某个分支，需要插入桩代码时，afl-as会生成一个随机数，作为运行时保存在ecx（rcx）
+       中的值。而这个随机数，便是用于标识这个代码块的key。
+       */
       fprintf(outf, use_64bit ? trampoline_fmt_64 : trampoline_fmt_32,
               R(MAP_SIZE));
 
@@ -275,7 +308,8 @@ static void add_instrumentation(void) {
 
     }
 
-    /* Output the actual line, call it a day in pass-thru mode. */
+    /* Output the actual line, call it a day in pass-thru mode.
+       输出实际的行内容，若pass_thru则结束循环。*/
 
     fputs(line, outf);
 
@@ -283,25 +317,33 @@ static void add_instrumentation(void) {
 
     /* All right, this is where the actual fun begins. For one, we only want to
        instrument the .text section. So, let's keep track of that in processed
-       files - and let's set instr_ok accordingly. */
+       files - and let's set instr_ok accordingly.
+       好吧，这是真正的乐趣开始的地方。一方面，我们只想检测.text部分。因此，让我们跟踪已处理文件
+       中的内容-并相应地设置instr_ok。*/
 
     if (line[0] == '\t' && line[1] == '.') {
 
       /* OpenBSD puts jump tables directly inline with the code, which is
          a bit annoying. They use a specific format of p2align directives
-         around them, so we use that as a signal. */
+         around them, so we use that as a signal.
+         OpenBSD将跳转表直接与代码内联，这有点烦人。它们在它们周围使用p2align指令的特
+         定格式，因此我们将其用作信号。*/
 
+      // 非OpenBSD不考虑，skip_next_label总是为0
       if (!clang_mode && instr_ok && !strncmp(line + 2, "p2align ", 8) &&
-          isdigit(line[10]) && line[11] == '\n') skip_next_label = 1;
+          isdigit(line[10]) && line[11] == '\n')
+        skip_next_label = 1;
 
+      // 若该行以\t.text等字符开头，则把instr_ok设为1，进入下一行
       if (!strncmp(line + 2, "text\n", 5) ||
           !strncmp(line + 2, "section\t.text", 13) ||
           !strncmp(line + 2, "section\t__TEXT,__text", 21) ||
           !strncmp(line + 2, "section __TEXT,__text", 21)) {
         instr_ok = 1;
-        continue; 
+        continue;
       }
 
+      // 若该行以\t.section\t等字符开头，则把instr_ok设为0，进入下一行
       if (!strncmp(line + 2, "section\t", 8) ||
           !strncmp(line + 2, "section ", 8) ||
           !strncmp(line + 2, "bss\n", 4) ||
@@ -314,22 +356,29 @@ static void add_instrumentation(void) {
 
     /* Detect off-flavor assembly (rare, happens in gdb). When this is
        encountered, we set skip_csect until the opposite directive is
-       seen, and we do not instrument. */
+       seen, and we do not instrument.
+       检测异味组装（罕见，在gdb中发生）。遇到这种情况时，我们将设置skip_csect直到
+       看到相反的指令为止，并且我们不进行检测。*/
 
+    // strstr查找字符串第一次出现的位置，返回从该位置起往后的字符串，找不到则返回NULL
     if (strstr(line, ".code")) {
 
+      // 一般不会出现这种情形，skip_csect总是为0
       if (strstr(line, ".code32")) skip_csect = use_64bit;
       if (strstr(line, ".code64")) skip_csect = !use_64bit;
 
     }
 
     /* Detect syntax changes, as could happen with hand-written assembly.
-       Skip Intel blocks, resume instrumentation when back to AT&T. */
+       Skip Intel blocks, resume instrumentation when back to AT&T.
+       检测语法更改，如手写汇编可能发生的那样。跳过英特尔程序块，回到AT＆T时恢复插桩。*/
 
+    // 一般不会出现这种情形，skip_intel总是为0
     if (strstr(line, ".intel_syntax")) skip_intel = 1;
     if (strstr(line, ".att_syntax")) skip_intel = 0;
 
-    /* Detect and skip ad-hoc __asm__ blocks, likewise skipping them. */
+    /* Detect and skip ad-hoc __asm__ blocks, likewise skipping them.
+       检测并跳过临时__asm__块，同样跳过它们。*/
 
     if (line[0] == '#' || line[1] == '#') {
 
@@ -341,6 +390,7 @@ static void add_instrumentation(void) {
     /* If we're in the right mood for instrumenting, check for function
        names or conditional labels. This is a bit messy, but in essence,
        we want to catch:
+       如果我们适合进行检测，请检查函数名称或条件标签。这有点混乱，但从本质上讲，我们要了解：
 
          ^main:      - function entry point (always instrumented)
          ^.L0:       - GCC branch label
@@ -359,20 +409,27 @@ static void add_instrumentation(void) {
        Additionally, clang and GCC on MacOS X follow a different convention
        with no leading dots on labels, hence the weird maze of #ifdefs
        later on.
+       此外，MacOS X上的clang和GCC遵循不同的约定，标签上没有前导点，因此稍后会出现ifdefs
+       的怪异迷宫。
 
      */
 
+    // 不需要检验函数名称或条件标签，进入下一行
     if (skip_intel || skip_app || skip_csect || !instr_ok ||
-        line[0] == '#' || line[0] == ' ') continue;
+        line[0] == '#' || line[0] == ' ')
+      continue;
 
     /* Conditional branch instruction (jnz, etc). We append the instrumentation
        right after the branch (to instrument the not-taken path) and at the
-       branch destination label (handled later on). */
+       branch destination label (handled later on).
+       条件分支指令（jnz等）。我们将在分支之后（以检测未采用的路径）和分支目标标签（稍后处理）
+       之后附加检测。*/
 
     if (line[0] == '\t') {
 
       if (line[1] == 'j' && line[2] != 'm' && R(100) < inst_ratio) {
 
+        // 条件分支指令也进行插桩，注意执行此插桩时分支指令已经写到输出文件中
         fprintf(outf, use_64bit ? trampoline_fmt_64 : trampoline_fmt_32,
                 R(MAP_SIZE));
 
@@ -386,7 +443,8 @@ static void add_instrumentation(void) {
 
     /* Label of some sort. This may be a branch destination, but we need to
        tread carefully and account for several different formatting
-       conventions. */
+       conventions.
+       某种标签。这可能是分支的目的地，但是我们需要谨慎行事并考虑几种不同的格式约定。*/
 
 #ifdef __APPLE__
 
@@ -433,7 +491,14 @@ static void add_instrumentation(void) {
 
              We use deferred output chiefly to avoid disrupting
              .Lfunc_begin0-style exception handling calculations (a problem on
-             MacOS X). */
+             MacOS X).
+
+             仅当在调用jmp之外的上下文中代码中提到了标签时，才可以通过添加代码来进行优化。就是
+             说，这需要两次通过处理（使用stdin的混乱）使代码复杂化，并且导致速度增益通常低于
+             10％，因为编译器通常很好地避免产生虚假的函数内跳转。
+
+             我们主要使用延迟输出来避免破坏.Lfunc_begin0样式的异常处理计算（在MacOS X上是一
+             个问题）。*/
 
           if (!skip_next_label) instrument_next = 1; else skip_next_label = 0;
 
@@ -444,13 +509,14 @@ static void add_instrumentation(void) {
         /* Function label (always instrumented, deferred mode). */
 
         instrument_next = 1;
-    
+
       }
 
     }
 
   }
 
+  // 若有行被插桩，则在输出文件的最后保存一段汇编代码
   if (ins_lines)
     fputs(use_64bit ? main_payload_64 : main_payload_32, outf);
 
@@ -459,14 +525,16 @@ static void add_instrumentation(void) {
 
   if (!be_quiet) {
 
-    if (!ins_lines) WARNF("No instrumentation targets found%s.",
-                          pass_thru ? " (pass-thru mode)" : "");
-    else OKF("Instrumented %u locations (%s-bit, %s mode, ratio %u%%).",
-             ins_lines, use_64bit ? "64" : "32",
-             getenv("AFL_HARDEN") ? "hardened" : 
-             (sanitizer ? "ASAN/MSAN" : "non-hardened"),
-             inst_ratio);
- 
+    if (!ins_lines)
+      WARNF("No instrumentation targets found%s.",
+            pass_thru ? " (pass-thru mode)" : "");
+    else
+      OKF("Instrumented %u locations (%s-bit, %s mode, ratio %u%%).",
+          ins_lines, use_64bit ? "64" : "32",
+          getenv("AFL_HARDEN") ? "hardened" :
+          (sanitizer ? "ASAN/MSAN" : "non-hardened"),
+          inst_ratio);
+
   }
 
 }
@@ -474,22 +542,22 @@ static void add_instrumentation(void) {
 
 /* Main entry point */
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
 
-  s32 pid;
-  u32 rand_seed;
-  int status;
-  u8* inst_ratio_str = getenv("AFL_INST_RATIO");
+  s32 pid;  // 进程号
+  u32 rand_seed;  // 随机种子
+  int status; // 状态码
+  u8 *inst_ratio_str = getenv("AFL_INST_RATIO");  // 获取环境变量
 
-  struct timeval tv;
-  struct timezone tz;
+  struct timeval tv;  // 其中的tv_sec是从linux epoch（1970-01-01 00:00:00）到创建该结构体的秒数，tv_usec是微秒数，即秒后面的零头
+  struct timezone tz; // 其中的tz_minuteswest是当地时间以格林威治时间为基准向西算的分钟数，tz_dsttime是日光节约时间的修正方式
 
   clang_mode = !!getenv(CLANG_ENV_VAR);
 
   if (isatty(2) && !getenv("AFL_QUIET")) {
 
     SAYF(cCYA "afl-as " cBRI VERSION cRST " by <lcamtuf@google.com>\n");
- 
+
   } else be_quiet = 1;
 
   if (argc < 2) {
@@ -506,41 +574,73 @@ int main(int argc, char** argv) {
     exit(1);
 
   }
+  printf("clang_mode: %d, be_quiet: %d\n", clang_mode, be_quiet);
 
-  gettimeofday(&tv, &tz);
+  gettimeofday(&tv, &tz); // 获取时间，填入tv和tz
 
-  rand_seed = tv.tv_sec ^ tv.tv_usec ^ getpid();
+  rand_seed = tv.tv_sec ^ tv.tv_usec ^ getpid();  // 通过时间来生成随机种子
 
-  srandom(rand_seed);
+  srandom(rand_seed); // 设置种子值，以后将使用random()生成随机数
 
-  edit_params(argc, argv);
+  printf("before edit_params...\n");
+  printf("input_file: %s, modified_file: %s\n", input_file, modified_file);
+  edit_params(argc, argv);  // 此函数执行完成后所有交给汇编器的参数均已确定
+  printf("after edit_params...\n");
+  printf("input_file: %s, modified_file: %s\n", input_file, modified_file);
+  for (int i = 0; i < as_par_cnt; i++) {
+    printf("%s\n", as_params[i]);
+  }
 
+  // 如果设置了AFL_INST_RATIO环境变量，检查其是否合法
   if (inst_ratio_str) {
 
-    if (sscanf(inst_ratio_str, "%u", &inst_ratio) != 1 || inst_ratio > 100) 
+    if (sscanf(inst_ratio_str, "%u", &inst_ratio) != 1 || inst_ratio > 100)
       FATAL("Bad value of AFL_INST_RATIO (must be between 0 and 100)");
 
   }
 
+  // 如果设置了AS_LOOP_ENV_VAR环境变量，出现错误提示
   if (getenv(AS_LOOP_ENV_VAR))
     FATAL("Endless loop when calling 'as' (remove '.' from your PATH)");
 
+  /*
+   通过此函数并不能添加或修改shell进程的环境变量，或者说通过setenv函数设置的环境变量只在本进程，
+   而且是本次执行中有效。如果在某一次运行程序时执行了setenv函数，进程终止后再次运行该程序，上次的
+   设置是无效的，上次设置的环境变量是不能读到的。将AS_LOOP_ENV_VAR设置为1。
+   */
   setenv(AS_LOOP_ENV_VAR, "1", 1);
 
   /* When compiling with ASAN, we don't have a particularly elegant way to skip
      ASAN-specific branches. But we can probabilistically compensate for
-     that... */
+     that...
+     使用ASAN进行编译时，我们没有一种特别优雅的方法来跳过特定于ASAN的分支。但是我们可以用概率来
+     弥补...*/
 
+  /*
+   Address Sanitizer（ASan）和Memory Sanitizer（MSAN）都是快速的内存错误检测工具。默认不
+   开启。
+   */
   if (getenv("AFL_USE_ASAN") || getenv("AFL_USE_MSAN")) {
     sanitizer = 1;
     inst_ratio /= 3;
   }
 
+  // 若不是仅仅显示版本，则进行插桩
   if (!just_version) add_instrumentation();
 
+  /*
+   fork函数用于创建一个与当前进程映像一样的子进程，所创建的子进程将复制父进程的代码段、数据段、BSS
+   段、堆、栈等所有用户空间信息，在内核中操作系统会重新为其申请一个子进程执行的位置。一个现有的进程
+   可通过调用fork函数创建一个新进程，由fork创建的新进程称为子进程child process，fork函数被调用
+   一次但返回两次，两次返回的唯一区别是子进程中返回0而父进程中返回子进程ID。
+   */
   if (!(pid = fork())) {
 
-    execvp(as_params[0], (char**)as_params);
+    /*
+     execvp()会从PATH 环境变量所指的目录中查找符合参数file 的文件名, 找到后便执行该文件, 然后将
+     第二个参数argv 传给该欲执行的文件。
+     */
+    execvp(as_params[0], (char **) as_params);
     FATAL("Oops, failed to execute '%s' - check your PATH", as_params[0]);
 
   }
