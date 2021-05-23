@@ -158,6 +158,11 @@ static const u8 *trampoline_fmt_32 =
     "/* --- END --- */\n"
     "\n";
 
+/*
+   首先先在栈上开辟一段空间，然后将rdx,rcx,rax这三个寄存器的值保存到栈上面，将rcx的值赋值会一个
+   随机数，这个随机数是在插入这段汇编的时候动态传进来的，然后调用__afl_maybe_log，调用完之后，
+   把栈上保存的值恢复回去，再把栈恢复。
+ */
 static const u8 *trampoline_fmt_64 =
 
     "\n"
@@ -410,7 +415,6 @@ static const u8 *main_payload_32 =
 #endif /* ^__APPLE__ */
 
 static const u8 *main_payload_64 =
-
     "\n"
     "/* --- AFL MAIN PAYLOAD (64-BIT) --- */\n"
     "\n"
@@ -419,21 +423,30 @@ static const u8 *main_payload_64 =
     ".code64\n"
     ".align 8\n"
     "\n"
+
+    /**TODO __afl_maybe_log*/
     "__afl_maybe_log:\n"
     "\n"
     #if defined(__OpenBSD__) || (defined(__FreeBSD__) && (__FreeBSD__ < 9))
     "  .byte 0x9f /* lahf */\n"
     #else
+    // 这两条指令大概就是将标志寄存器FLAGS，溢出进位保存到AH上面
     "  lahf\n"
     #endif /* ^__OpenBSD__, etc */
     "  seto  %al\n"
     "\n"
     "  /* Check if SHM region is already mapped. */\n"
+    // 这里检查共享内存是否已经加载，如果加载了，__afl_area_ptr保存了共享内存的指针，否则就是NULL
     "\n"
     "  movq  __afl_area_ptr(%rip), %rdx\n"
     "  testq %rdx, %rdx\n"
     "  je    __afl_setup\n"
     "\n"
+
+    /**TODO __afl_store*/
+    // 这部分是计算并储存代码命中位置，当前代码的位置在寄存器rcx中
+    // 假如没有定义COVERAGE_ONLY，那么前两条xor，是将__afl_prev_loc的值与rcx的值进行交换
+    // 然后将__afl_prev_loc的值右移一下
     "__afl_store:\n"
     "\n"
     "  /* Calculate and store hit for the code location specified in rcx. */\n"
@@ -444,33 +457,44 @@ static const u8 *main_payload_64 =
     "  shrq $1, __afl_prev_loc(%rip)\n"
     #endif /* ^!COVERAGE_ONLY */
     "\n"
+    // 假如定义了SKIP_COUNTS，那么就会执行
     #ifdef SKIP_COUNTS
     "  orb  $1, (%rdx, %rcx, 1)\n"
+    // 如果没有定义的话，那么就会变成，这里rdx的值存的是共享内存的地址
     #else
     "  incb (%rdx, %rcx, 1)\n"
     #endif /* ^SKIP_COUNTS */
     "\n"
+
+    /**TODO __afl_return*/
     "__afl_return:\n"
     "\n"
+    // 这里首先是将al+0x7f，然后再把标志寄存器FLAGS的值从AH中恢复回去,估计是恢复标志寄存器，溢出进位的步骤
     "  addb $127, %al\n"
     #if defined(__OpenBSD__) || (defined(__FreeBSD__) && (__FreeBSD__ < 9))
     "  .byte 0x9e /* sahf */\n"
     #else
     "  sahf\n"
     #endif /* ^__OpenBSD__, etc */
+    // 注意，这里调用afl_maybe_log，其实是执行到afl_return才返回的
     "  ret\n"
     "\n"
     ".align 8\n"
     "\n"
+
+    /**TODO __afl_setup*/
     "__afl_setup:\n"
     "\n"
     "  /* Do not retry setup if we had previous failures. */\n"
     "\n"
+    // 首先判断之前有没有错误，有的话，直接就返回
     "  cmpb $0, __afl_setup_failure(%rip)\n"
     "  jne __afl_return\n"
     "\n"
     "  /* Check out if we have a global pointer on file. */\n"
     "\n"
+    // 第一个首先是判断我们是否有一个文件全局指针，即__afl_global_area_ptr是否为NULL
+    // 如果存在的话，就把afl_area_ptr的值放到rdx，调用__afl_store，不存在的话，就继续到__afl_setup_first
     #ifndef __APPLE__
     "  movq  __afl_global_area_ptr@GOTPCREL(%rip), %rdx\n"
     "  movq  (%rdx), %rdx\n"
@@ -483,11 +507,14 @@ static const u8 *main_payload_64 =
     "  movq %rdx, __afl_area_ptr(%rip)\n"
     "  jmp  __afl_store\n"
     "\n"
+
+    /**TODO __afl_setup_first*/
     "__afl_setup_first:\n"
     "\n"
     "  /* Save everything that is not yet saved and that may be touched by\n"
     "     getenv() and several other libcalls we'll be relying on. */\n"
     "\n"
+    // 这段代码的意思就是将剩下所有会被libc库函数影响的寄存器保存到栈上面
     "  leaq -352(%rsp), %rsp\n"
     "\n"
     "  movq %rax,   0(%rsp)\n"
@@ -521,17 +548,20 @@ static const u8 *main_payload_64 =
     "  /* The 64-bit ABI requires 16-byte stack alignment. We'll keep the\n"
     "     original stack ptr in the callee-saved r12. */\n"
     "\n"
+    // 这里是先保存r12，然后将栈指针保存到r12那里，再开一段栈空间，进行对齐
     "  pushq %r12\n"
     "  movq  %rsp, %r12\n"
     "  subq  $16, %rsp\n"
     "  andq  $0xfffffffffffffff0, %rsp\n"
     "\n"
+    // 这里就是调用getenv去拿存在环境变量中的共享内存标志符，拿不到的话，就会跳到__afl_setup_abort
     "  leaq .AFL_SHM_ENV(%rip), %rdi\n"
     CALL_L64("getenv")
     "\n"
     "  testq %rax, %rax\n"
     "  je    __afl_setup_abort\n"
     "\n"
+    // 这里调用atoi将字符串转为数字，然后调用shmat拿到共享内存，然后判断shamat的结果，若拿不到，也会跳到__afl_setup_abort
     "  movq  %rax, %rdi\n"
     CALL_L64("atoi")
     "\n"
@@ -545,6 +575,7 @@ static const u8 *main_payload_64 =
     "\n"
     "  /* Store the address of the SHM region. */\n"
     "\n"
+    // 这里是把共享内存的地址存到afl_area_ptr和afl_global_area_ptr指向的内存
     "  movq %rax, %rdx\n"
     "  movq %rax, __afl_area_ptr(%rip)\n"
     "\n"
@@ -556,6 +587,8 @@ static const u8 *main_payload_64 =
     #endif /* ^__APPLE__ */
     "  movq %rax, %rdx\n"
     "\n"
+
+    /**TODO __afl_forkserver*/
     "__afl_forkserver:\n"
     "\n"
     "  /* Enter the fork server mode to avoid the overhead of execve() calls. We\n"
@@ -577,6 +610,8 @@ static const u8 *main_payload_64 =
     "  cmpq $4, %rax\n"
     "  jne  __afl_fork_resume\n"
     "\n"
+
+    /**TODO __afl_fork_wait_loop*/
     "__afl_fork_wait_loop:\n"
     "\n"
     "  /* Wait for parent by reading from the pipe. Abort if read fails. */\n"
@@ -623,6 +658,8 @@ static const u8 *main_payload_64 =
     "\n"
     "  jmp  __afl_fork_wait_loop\n"
     "\n"
+
+    /**TODO __afl_fork_resume*/
     "__afl_fork_resume:\n"
     "\n"
     "  /* In child process: close fds, resume execution. */\n"
@@ -669,11 +706,15 @@ static const u8 *main_payload_64 =
     "\n"
     "  jmp  __afl_store\n"
     "\n"
+
+    /**TODO __afl_die*/
     "__afl_die:\n"
     "\n"
     "  xorq %rax, %rax\n"
     CALL_L64("_exit")
     "\n"
+
+    /**TODO __afl_setup_abort*/
     "__afl_setup_abort:\n"
     "\n"
     "  /* Record setup failure so that we don't keep calling\n"

@@ -51,25 +51,28 @@
 #include <stdlib.h>
 #include <string.h>
 
-static u8*  as_path;                /* Path to the AFL 'as' wrapper      */
-static u8** cc_params;              /* Parameters passed to the real CC  */
-static u32  cc_par_cnt = 1;         /* Param count, including argv0      */
-static u8   be_quiet,               /* Quiet mode                        */
-            clang_mode;             /* Invoked as afl-clang*?            */
+static u8 *as_path;                /* Path to the AFL 'as' wrapper 交给AFL汇编器的路径     */
+static u8 **cc_params;              /* Parameters passed to the real CC 交给真正的汇编器的参数 */
+static u32 cc_par_cnt = 1;         /* Param count, including argv0 参数个数     */
+static u8 be_quiet,               /* Quiet mode                        */
+clang_mode;             /* Invoked as afl-clang*?            */
 
 
 /* Try to find our "fake" GNU assembler in AFL_PATH or at the location derived
-   from argv[0]. If that fails, abort. */
+   from argv[0]. If that fails, abort.
+   尝试在AFL_PATH或从argv[0]派生的位置中找到我们的“伪”GNU汇编器。如果失败，请中止。*/
 
-static void find_as(u8* argv0) {
+static void find_as(u8 *argv0) {
 
   u8 *afl_path = getenv("AFL_PATH");
   u8 *slash, *tmp;
 
+  // 首先从环境变量AFL_PATH中寻找
   if (afl_path) {
 
     tmp = alloc_printf("%s/as", afl_path);
 
+    // 检查权限
     if (!access(tmp, X_OK)) {
       as_path = afl_path;
       ck_free(tmp);
@@ -80,8 +83,13 @@ static void find_as(u8* argv0) {
 
   }
 
+  /*
+   查找一个字符串在另一个字符串中末次出现的位置，并返回从字符串中的这个位置起，一直
+   到字符串结束的所有字符，找不到则返回NULL。检查argv[0]是否有分隔符/。
+   */
   slash = strrchr(argv0, '/');
 
+  // 在afl-gcc同级目录下寻找afl-as
   if (slash) {
 
     u8 *dir;
@@ -94,6 +102,7 @@ static void find_as(u8* argv0) {
 
     if (!access(tmp, X_OK)) {
       as_path = dir;
+
       ck_free(tmp);
       return;
     }
@@ -103,19 +112,20 @@ static void find_as(u8* argv0) {
 
   }
 
+  // 以默认的/usr/local/lib/afl作为as_path
   if (!access(AFL_PATH "/as", X_OK)) {
     as_path = AFL_PATH;
     return;
   }
 
   FATAL("Unable to find AFL wrapper binary for 'as'. Please set AFL_PATH");
- 
+
 }
 
 
 /* Copy argv to cc_params, making the necessary edits. */
 
-static void edit_params(u32 argc, char** argv) {
+static void edit_params(u32 argc, char **argv) {
 
   u8 fortify_set = 0, asan_set = 0;
   u8 *name;
@@ -124,7 +134,7 @@ static void edit_params(u32 argc, char** argv) {
   u8 m32_set = 0;
 #endif
 
-  cc_params = ck_alloc((argc + 128) * sizeof(u8*));
+  cc_params = ck_alloc((argc + 128) * sizeof(u8 *));
 
   name = strrchr(argv[0], '/');
   if (!name) name = argv[0]; else name++;
@@ -136,11 +146,11 @@ static void edit_params(u32 argc, char** argv) {
     setenv(CLANG_ENV_VAR, "1", 1);
 
     if (!strcmp(name, "afl-clang++")) {
-      u8* alt_cxx = getenv("AFL_CXX");
-      cc_params[0] = alt_cxx ? alt_cxx : (u8*)"clang++";
+      u8 *alt_cxx = getenv("AFL_CXX");
+      cc_params[0] = alt_cxx ? alt_cxx : (u8 *) "clang++";
     } else {
-      u8* alt_cc = getenv("AFL_CC");
-      cc_params[0] = alt_cc ? alt_cc : (u8*)"clang";
+      u8 *alt_cc = getenv("AFL_CC");
+      cc_params[0] = alt_cc ? alt_cc : (u8 *) "clang";
     }
 
   } else {
@@ -171,14 +181,14 @@ static void edit_params(u32 argc, char** argv) {
 #else
 
     if (!strcmp(name, "afl-g++")) {
-      u8* alt_cxx = getenv("AFL_CXX");
-      cc_params[0] = alt_cxx ? alt_cxx : (u8*)"g++";
+      u8 *alt_cxx = getenv("AFL_CXX");
+      cc_params[0] = alt_cxx ? alt_cxx : (u8 *) "g++";
     } else if (!strcmp(name, "afl-gcj")) {
-      u8* alt_cc = getenv("AFL_GCJ");
-      cc_params[0] = alt_cc ? alt_cc : (u8*)"gcj";
+      u8 *alt_cc = getenv("AFL_GCJ");
+      cc_params[0] = alt_cc ? alt_cc : (u8 *) "gcj";
     } else {
-      u8* alt_cc = getenv("AFL_CC");
-      cc_params[0] = alt_cc ? alt_cc : (u8*)"gcc";
+      u8 *alt_cc = getenv("AFL_CC");
+      cc_params[0] = alt_cc ? alt_cc : (u8 *) "gcc";
     }
 
 #endif /* __APPLE__ */
@@ -186,13 +196,16 @@ static void edit_params(u32 argc, char** argv) {
   }
 
   while (--argc) {
-    u8* cur = *(++argv);
+    u8 *cur = *(++argv);
 
     if (!strncmp(cur, "-B", 2)) {
 
       if (!be_quiet) WARNF("-B is already set, overriding");
 
-      if (!cur[2] && argc > 1) { argc--; argv++; }
+      if (!cur[2] && argc > 1) {
+        argc--;
+        argv++;
+      }
       continue;
 
     }
@@ -206,7 +219,8 @@ static void edit_params(u32 argc, char** argv) {
 #endif
 
     if (!strcmp(cur, "-fsanitize=address") ||
-        !strcmp(cur, "-fsanitize=memory")) asan_set = 1;
+        !strcmp(cur, "-fsanitize=memory"))
+      asan_set = 1;
 
     if (strstr(cur, "FORTIFY_SOURCE")) fortify_set = 1;
 
@@ -273,16 +287,20 @@ static void edit_params(u32 argc, char** argv) {
 
 #else
 
-      cc_params[cc_par_cnt++] = "-g";
+    // -g选项表示生成调试信息
+    cc_params[cc_par_cnt++] = "-g";
 
 #endif
 
+    // -O3表示编译优化，-funroll-loops也是优化的一种
     cc_params[cc_par_cnt++] = "-O3";
     cc_params[cc_par_cnt++] = "-funroll-loops";
 
     /* Two indicators that you're building for fuzzing; one of them is
-       AFL-specific, the other is shared with libfuzzer. */
+       AFL-specific, the other is shared with libfuzzer.
+       您正在建立的两个模糊测试指标；其中一个特定于AFL，另一个与libfuzzer共享。*/
 
+    // -D表示定义宏
     cc_params[cc_par_cnt++] = "-D__AFL_COMPILER=1";
     cc_params[cc_par_cnt++] = "-DFUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION=1";
 
@@ -307,7 +325,7 @@ static void edit_params(u32 argc, char** argv) {
 
 /* Main entry point */
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
 
   if (isatty(2) && !getenv("AFL_QUIET")) {
 
@@ -333,11 +351,20 @@ int main(int argc, char** argv) {
 
   }
 
+  /*
+   寻找AFL的汇编器，依次从环境变量AFL_PATH、gcc-afl同级目录和/usr/local/lib/afl中寻找，若找到则不再
+   继续寻找，找到的路径赋给as_path。
+   */
   find_as(argv[0]);
 
   edit_params(argc, argv);
+  printf("the instruction to call gcc is:\n");
+  for (int i = 0; i < cc_par_cnt; i++) {
+    printf("%s ", cc_params[i]);
+  }
+  printf("\n");
 
-  execvp(cc_params[0], (char**)cc_params);
+  execvp(cc_params[0], (char **) cc_params);
 
   FATAL("Oops, failed to execute '%s' - check your PATH", cc_params[0]);
 

@@ -67,7 +67,7 @@ pass_thru,          /* Just pass data through? 只是通过数据？            
 just_version,       /* Just show version? 是否只是显示版本？                  */
 sanitizer;          /* Using ASAN / MSAN 是否使用ASAN或MSAN                  */
 
-static u32 inst_ratio = 100,   /* Instrumentation probability (%) 插桩概率     */
+static u32 inst_ratio = 100,   /* Instrumentation probability (%) 插桩概率（密度）     */
 as_par_cnt = 1;     /* Number of params to 'as' 交给汇编器的参数的个数            */
 
 /* If we don't find --32 or --64 in the command line, default to 
@@ -251,6 +251,8 @@ static void add_instrumentation(void) {
   s32 outfd;  // 打开modified_file时的文件描述符
   u32 ins_lines = 0;  // 被插桩的行数
 
+  // instr_ok用来检测当前行是否为代码段，instrument_next来检测是否在基本块中
+  // 基本块标识符包含了冒号和点号，以点开头，中间是数字和字母
   u8 instr_ok = 0, skip_csect = 0, skip_next_label = 0,
       skip_intel = 0, skip_app = 0, instrument_next = 0;
 
@@ -387,6 +389,7 @@ static void add_instrumentation(void) {
 
     }
 
+    // 这段注释大概就是说，在main函数，GCC branch label，clang branch label，conditional branches处插入指令
     /* If we're in the right mood for instrumenting, check for function
        names or conditional labels. This is a bit messy, but in essence,
        we want to catch:
@@ -582,14 +585,14 @@ int main(int argc, char **argv) {
 
   srandom(rand_seed); // 设置种子值，以后将使用random()生成随机数
 
-  printf("before edit_params...\n");
-  printf("input_file: %s, modified_file: %s\n", input_file, modified_file);
   edit_params(argc, argv);  // 此函数执行完成后所有交给汇编器的参数均已确定
   printf("after edit_params...\n");
   printf("input_file: %s, modified_file: %s\n", input_file, modified_file);
+  printf("the instruction to call as is:\n");
   for (int i = 0; i < as_par_cnt; i++) {
-    printf("%s\n", as_params[i]);
+    printf("%s ", as_params[i]);
   }
+  printf("\n");
 
   // 如果设置了AFL_INST_RATIO环境变量，检查其是否合法
   if (inst_ratio_str) {
